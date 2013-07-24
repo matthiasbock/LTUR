@@ -55,7 +55,7 @@ def between(hay, before, after, occurence=1, skip=None, include=False, include_b
 		p += len(before)
 	q = haystack.find(after, p)
 	if q < 0:
-		q = len(haystack)-1
+		q = len(haystack)
 	else:
 		if include or include_after:
 			q += len(after)
@@ -142,14 +142,20 @@ ElementClassesOfInterest = { "input": ["type", "name", "id", "value"], "img": ["
 
 class Element:							# Form method parse stores it's elements as array of Element classes
 	def __init__(self, HTML):
+		self.HTML = HTML
 		p = HTML.find("<")+1
 		if p == -1:
-			return None
+			return
 		q = HTML.find(" ", p)
 		self.Class = HTML[p:q].lower()
 		if self.Class in ElementClassesOfInterest.keys():
 			for field in ElementClassesOfInterest[ self.Class ]:
-				self.__dict__[ field ] = getvalue( HTML, field )
+				value = getvalue( HTML, field )
+				if value != '':
+					self.__dict__[ field ] = value
+					
+	def __str__(self):
+		return self.HTML
 
 class Form:							# Robot method parse() stores results as array of Form classes
 	def __init__(self, HTML=None):
@@ -157,6 +163,9 @@ class Form:							# Robot method parse() stores results as array of Form classes
 			self.parse( HTML )
 		else:
 			self.name = self.id = self.action = self.method = ""
+
+	def __str__(self):
+		return self.POSTline()
 
 	def parse(self, HTML):
 		self.name   = getvalue( HTML, "name" )
@@ -170,23 +179,23 @@ class Form:							# Robot method parse() stores results as array of Form classes
 			starter = "<"+Class+" "
 			p = lower.find( starter )
 			while ( p > -1 ):
-				q = lower.find( ">", p )
+				q = lower.find( ">", p )+1
 				e = Element(HTML[p:q])
-				if "name" in e.__dict__.keys():
+				#print str(e)
+				if 'name' in e.__dict__.keys():
+					if not 'value' in e.__dict__.keys():
+						e.value = ''
 					self.__dict__[ Class ][e.name] = e
 				p = lower.find( starter, q )
 
 	def POSTdict(self):
 		result = {}
 		for i in self.input.values():
-			result[ i.name ] = quote_plus( i.value ) #.replace(" ", "+") 
+			result[ i.name ] = quote_plus( i.value )
 		return result
 
 	def POSTline(self):
-		result = ""
-		for i in self.input.values():
-			result += i.name+"="+quote_plus( i.value )+"&"
-		return result.rstrip("&")
+		return '&'.join( [i.name+"="+quote_plus(i.value) for i in self.input.values()] )
 
 class Eval:
 	def __init__(self, source, debug=False):
@@ -301,26 +310,26 @@ class HTML:
 		return self.string.find(needle, start_at)
 
 	def parse(self):
-		if self.forms is not None:
-			return
 		self.forms = []
 
 		self.log("Searching document for forms ...")
 		lower = self.lower()
 		p = lower.find("<form")						# find form
 		while ( p > -1 ):
-			if lower[p+5] == " " or lower[p+5] == ">":		# is it "<form " or "<form>" ?
-				q = lower.find("</form>", p)+7			# find end of form
-				if q == -1:
-					q = len(lower)				# if end not found, copy until end of file
-				self.forms.append( Form(self.string[p:q]) )
+			if lower[p+5] in " >":					# is it "<form " or "<form>" ?
+				q = lower.find("</form>", p+5)+7		# find end of form
+				if q < p+5:						# may be -1 (not found) or < p+5 (restart search at beginning)
+					q = len(lower)					# if end not found, copy until end of file
+				form = self.string[p:q].strip()
+				if len(form) > 0:
+					self.forms.append( Form(form) )
 			else:
-				q = p+1
+				q = p+5
 			p = lower.find("<form", q)
 
 		self.log("Found "+str(len(self.forms))+" forms.")
 
-	def findForm(self, name=None, ID=None, action=None):			# return specified form
+	def findForm(self, name=None, ID=None, action=None, number=None):			# return specified form
 		if self.forms is None:
 			self.parse()						# parse, if not parsed already
 		if name is not None:
@@ -336,7 +345,16 @@ class HTML:
 				if form.action == action:			# get form by action
 					return form
 		elif len(self.forms) > 0:					# if no parameters are given, return the first form
-			return self.forms[0]
+			if number is None:
+				# return the first <form>
+				return self.forms[0]
+			else:
+				if number > len(self.forms):
+					# return last <form>
+					return self.forms[len(self.forms)-1]
+				else:
+					# return requested <form>
+					return self.forms[number-1]
 		return None
 
 	def findEval(self, occurence=1):
